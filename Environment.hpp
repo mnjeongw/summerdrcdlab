@@ -16,7 +16,7 @@ class ENVIRONMENT : public RaisimGymEnv {
  public:
 
   explicit ENVIRONMENT(const std::string& resourceDir, const Yaml::Node& cfg, bool visualizable) :
-      RaisimGymEnv(resourceDir, cfg), visualizable_(visualizable), normDist_(0, 1) {
+      RaisimGymEnv(resourceDir, cfg), visualizable_(visualizable), uniDist_ (-1.0, 1.0) {
 
     /// create world
     world_ = std::make_unique<raisim::World>();
@@ -41,6 +41,14 @@ class ENVIRONMENT : public RaisimGymEnv {
     gv_.setZero(gvDim_); gv_init_.setZero(gvDim_);
     pTarget_.setZero(gcDim_); vTarget_.setZero(gvDim_); pTarget12_.setZero(nJoints_);
     command_.setZero();
+
+    rewardpos_ = 0.0;
+    rewardneg_ = 0.0;
+
+    ///for creating a bound in cmd velocity generation
+    READ_YAML(double, maxlinvel_, cfg_["maxlinvel"])
+    READ_YAML(double, maxangvel_, cfg_["maxangvel"])
+    READ_YAML(int, commandresamplestep_, cfg_["commandresamplestep"])
 
     /// this is nominal configuration of hound
     //This is the reset pose: the exact joint configuration the robot snaps back to at the start of every episode.
@@ -104,7 +112,10 @@ class ENVIRONMENT : public RaisimGymEnv {
   //After every episode, snap back to the fixed initial pose, refresh the observation buffer.
   void reset() final {
     hound_->setState(gc_init_, gv_init_);
-    command_ << normDist_(gen_),  normDist_(gen_), normDist_(gen_);
+    command_ << maxlinvel_ * uniDist_(gen_), maxlinvel_ * uniDist_(gen_), maxangvel_ * uniDist_(gen_);
+    stepcounter_ = 0;
+    rewardpos_ = 0.0;
+    rewardneg_ = 0.0;
     updateObservation();
   }
 
@@ -137,6 +148,9 @@ class ENVIRONMENT : public RaisimGymEnv {
 
     updateObservation();
 
+    rewardpos_ = 0.0;
+    rewardneg_ = 0.0;
+
     //This is where the reward gets computed. 
     //This is the exact place where you'd add a new term if you wanted a new task.
     rewards_.record("torque", hound_->getGeneralizedForce().squaredNorm()); //the sum of squared torques across all joints
@@ -144,18 +158,34 @@ class ENVIRONMENT : public RaisimGymEnv {
     //reward for tracking the velocity command
     double linvelerr = (command_.head(2) - bodyLinearVel_.head(2)).squaredNorm();
     double angvelerr = (command_[2] - bodyAngularVel_[2]);
-    rewards_.record("linearvelerr", -linvelerr);
-    rewards_.record("angularvelerr", -(angvelerr * angvelerr));
-    
-    Eigen::Vector3d currentVel(bodyLinearVel_[0], bodyLinearVel_[1], bodyAngularVel_[2]); //(Vx, Vy, yaw rate)
-    Eigen::Vector3d velError = command_ - currentVel;
-    rewards_.record("velerror", -velError.squaredNorm());
+    rewards_.record("linearvelerr", exp(-linvelerr));
+    rewards_.record("angularvelerr", exp(-0.5 * (angvelerr * angvelerr)));
     
     //penalizing joint velocity so the robot takes fewer, bigger steps
     rewards_.record("jointvel", gv_.tail(12).squaredNorm());
 
-    //This applies the coeff multipliers from yaml automatically
-    return rewards_.sum();
+    //periodically resamples the command velocity
+    stepcounter_++;
+    if (stepcounter_ % commandresamplestep_ == 0) {
+      command_ << maxlinvel_ * uniDist_(gen_), maxlinvel_ * uniDist_(gen_), maxangvel_ * uniDist_(gen_);
+      updateObservation();
+    }
+
+    static const std::set<std::string> positiveRewards_ = {"linearvelerr", "angularvelerr"};
+    static const std::set<std::string> negativeRewards_ = {"torque", "jointvel"};
+    
+    for (const auto& iterator : rewards_.getStdMap()) {
+      const std::string& name = iterator.first;
+      double rewardweight = static_cast<double>(iterator.second);
+
+      if (positiveRewards_.count(name)) {
+        rewardpos_ += rewardweight;
+      } else if (negativeRewards_.count(name)) {
+        rewardneg_ += rewardweight;
+      }
+    }
+
+    return rewardpos_ * exp(0.2 * rewardneg_);
   }
 
   //Building the observation vector
@@ -210,8 +240,16 @@ class ENVIRONMENT : public RaisimGymEnv {
   double terminalRewardCoeff_ = -10.;
   Eigen::VectorXd actionMean_, actionStd_, obDouble_;
   Eigen::Vector3d bodyLinearVel_, bodyAngularVel_;
-  Eigen::Vector3d command_;
   std::set<size_t> footIndices_;
+
+  ///command velocity
+  Eigen::Vector3d command_;
+  std::uniform_real_distribution<double> uniDist_;
+  double maxlinvel_, maxangvel_;
+  int commandresamplestep_;
+  int stepcounter_ = 0;
+
+  double rewardpos_, rewardneg_;
 
   /// these variables are not in use. They are placed to show you how to create a random number sampler.
   std::normal_distribution<double> normDist_;
