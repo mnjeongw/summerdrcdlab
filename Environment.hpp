@@ -40,6 +40,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     gc_.setZero(gcDim_); gc_init_.setZero(gcDim_);
     gv_.setZero(gvDim_); gv_init_.setZero(gvDim_);
     pTarget_.setZero(gcDim_); vTarget_.setZero(gvDim_); pTarget12_.setZero(nJoints_);
+    command_.setZero();
 
     /// this is nominal configuration of hound
     //This is the reset pose: the exact joint configuration the robot snaps back to at the start of every episode.
@@ -59,7 +60,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     hound_->setGeneralizedForce(Eigen::VectorXd::Zero(gvDim_));
 
     /// MUST BE DONE FOR ALL ENVIRONMENTS
-    obDim_ = 34;
+    obDim_ = 37;
     actionDim_ = nJoints_; actionMean_.setZero(actionDim_); actionStd_.setZero(actionDim_);
     obDouble_.setZero(obDim_);
 
@@ -103,6 +104,7 @@ class ENVIRONMENT : public RaisimGymEnv {
   //After every episode, snap back to the fixed initial pose, refresh the observation buffer.
   void reset() final {
     hound_->setState(gc_init_, gv_init_);
+    command_ << normDist_(gen_),  normDist_(gen_), normDist_(gen_);
     updateObservation();
   }
 
@@ -138,9 +140,14 @@ class ENVIRONMENT : public RaisimGymEnv {
     //This is where the reward gets computed. 
     //This is the exact place where you'd add a new term if you wanted a new task.
     rewards_.record("torque", hound_->getGeneralizedForce().squaredNorm()); //the sum of squared torques across all joints
-    //bodyLinearVel_[0] is the x-component (forward direction) of the robot's body velocity, capped at 4.0 m/s, meaning the robot gets
-    //no extra reward for going faster than 4m/s.
-    rewards_.record("forwardVel", std::min(1.0, bodyLinearVel_[0])); 
+    
+    //reward for tracking the velocity command
+    Eigen::Vector3d currentVel(bodyLinearVel_[0], bodyLinearVel_[1], bodyAngularVel_[2]); //(Vx, Vy, yaw rate)
+    Eigen::Vector3d velError = command_ - currentVel;
+    rewards_.record("velerror", -velError.squaredNorm());
+    
+    //penalizing joint velocity so the robot takes fewer, bigger steps
+    rewards_.record("jointvel", gv_.tail(12).squaredNorm());
 
     //This applies the coeff multipliers from yaml automatically
     return rewards_.sum();
@@ -165,8 +172,8 @@ class ENVIRONMENT : public RaisimGymEnv {
         //This is useful to tell the network 'how tilted the robot is' without needing the full quaternion.
         gc_.tail(12), /// joint angles
         bodyLinearVel_, bodyAngularVel_, /// body linear&angular velocity
-        gv_.tail(12); /// joint velocity
-        //You can see that when you add these up 1 + 3 + 12 + 3 + 3 + 12 = 34, which matches the current observation dimension
+        gv_.tail(12), /// joint velocity
+        command_; //command velocity vector
   }
 
   void observe(Eigen::Ref<EigenVec> ob) final {
@@ -198,6 +205,7 @@ class ENVIRONMENT : public RaisimGymEnv {
   double terminalRewardCoeff_ = -10.;
   Eigen::VectorXd actionMean_, actionStd_, obDouble_;
   Eigen::Vector3d bodyLinearVel_, bodyAngularVel_;
+  Eigen::Vector3d command_;
   std::set<size_t> footIndices_;
 
   /// these variables are not in use. They are placed to show you how to create a random number sampler.

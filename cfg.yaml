@@ -14,10 +14,12 @@ environment:
   hip_action_std: 0.2
   knee_action_std: 0.4
   reward:
-    forwardVel:
-      coeff: 0.3
+    velerror:
+      coeff: 1.0
     torque:
       coeff: -4e-5
+    jointvel:
+      coeff: -2e-4
 
 architecture:
   policy_net: [128, 128]
