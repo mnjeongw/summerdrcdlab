@@ -14,7 +14,9 @@ environment:
   hip_action_std: 0.2
   knee_action_std: 0.4
   reward:
-    velerror:
+    linearvelerr:
+      coeff: 1.0
+    angularvelerr:
       coeff: 1.0
     torque:
       coeff: -4e-5

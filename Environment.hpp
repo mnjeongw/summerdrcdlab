@@ -142,6 +142,11 @@ class ENVIRONMENT : public RaisimGymEnv {
     rewards_.record("torque", hound_->getGeneralizedForce().squaredNorm()); //the sum of squared torques across all joints
     
     //reward for tracking the velocity command
+    double linvelerr = (command_.head(2) - bodyLinearVel_.head(2)).squaredNorm();
+    double angvelerr = (command_[2] - bodyAngularVel_[2]);
+    rewards_.record("linearvelerr", -linvelerr);
+    rewards_.record("angularvelerr", -(angvelerr * angvelerr));
+    
     Eigen::Vector3d currentVel(bodyLinearVel_[0], bodyLinearVel_[1], bodyAngularVel_[2]); //(Vx, Vy, yaw rate)
     Eigen::Vector3d velError = command_ - currentVel;
     rewards_.record("velerror", -velError.squaredNorm());
