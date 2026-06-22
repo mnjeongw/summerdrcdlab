@@ -8,12 +8,12 @@ environment:
   num_threads: 30
   simulation_dt: 0.0025
   control_dt: 0.01
-  max_time: 4.0
+  max_time: 30.0
   
   #command velocity
   maxlinvel: 3.0
   maxangvel: 1.5
-  commandresamplestep: 100
+  commandresamplestep: 200
 
   #joint movement limit
   roll_action_std: 0.1
@@ -25,10 +25,12 @@ environment:
       coeff: 5.0
     angularvelerr:
       coeff: 3.0
+    verticalvelocity:
+      coeff: -6e-4
     torque:
       coeff: -6e-4
     jointvel:
-      coeff: -6e-4
+      coeff: -3e-4
 
 architecture:
   policy_net: [128, 128]

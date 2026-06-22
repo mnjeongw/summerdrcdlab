@@ -46,8 +46,8 @@ class ENVIRONMENT : public RaisimGymEnv {
     rewardneg_ = 0.0;
 
     ///for creating a bound in cmd velocity generation
-    READ_YAML(double, maxlinvel_, cfg_["maxlinvel"])
-    READ_YAML(double, maxangvel_, cfg_["maxangvel"])
+    maxlinvel_ = 1.0;
+    maxangvel_ = 0.7;
     READ_YAML(int, commandresamplestep_, cfg_["commandresamplestep"])
 
     /// this is nominal configuration of hound
@@ -164,6 +164,9 @@ class ENVIRONMENT : public RaisimGymEnv {
     //penalizing joint velocity so the robot takes fewer, bigger steps
     rewards_.record("jointvel", gv_.tail(12).squaredNorm());
 
+    //penalize vertical motion to fix bounciness
+    rewards_.record("verticalvelocity", bodyLinearVel_[2].squaredNorm());
+
     //periodically resamples the command velocity
     stepcounter_++;
     if (stepcounter_ % commandresamplestep_ == 0) {
@@ -172,7 +175,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     }
 
     static const std::set<std::string> positiveRewards_ = {"linearvelerr", "angularvelerr"};
-    static const std::set<std::string> negativeRewards_ = {"torque", "jointvel"};
+    static const std::set<std::string> negativeRewards_ = {"torque", "jointvel", "verticalvelocity"};
     
     for (const auto& iterator : rewards_.getStdMap()) {
       const std::string& name = iterator.first;
@@ -230,7 +233,10 @@ class ENVIRONMENT : public RaisimGymEnv {
     return false;
   }
 
-  void curriculumUpdate() { };
+  void curriculumUpdate() { 
+    episodecounter_++;
+    maxlinvel_ = 1.0 + (2.5 / (1.0 + exp(-0.002 * (episodecounter_ - 1000))))
+  };
 
  private:
   int gcDim_, gvDim_, nJoints_;
@@ -248,6 +254,7 @@ class ENVIRONMENT : public RaisimGymEnv {
   double maxlinvel_, maxangvel_;
   int commandresamplestep_;
   int stepcounter_ = 0;
+  int episodecounter_ = 0;
 
   double rewardpos_, rewardneg_;
 
