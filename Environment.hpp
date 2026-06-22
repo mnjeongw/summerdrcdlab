@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <set>
 #include "../../RaisimGymEnv.hpp"
+#include <cmath>
 
 namespace raisim {
 
@@ -50,10 +51,20 @@ class ENVIRONMENT : public RaisimGymEnv {
     maxangvel_ = 0.7;
     READ_YAML(int, commandresamplestep_, cfg_["commandresamplestep"])
 
+    //airtime
+    /*
     footbodyindex_[0] = hound_ -> getBodyIdx("FR_calf");
     footbodyindex_[1] = hound_ -> getBodyIdx("FL_calf");
     footbodyindex_[2] = hound_ -> getBodyIdx("RR_calf");
     footbodyindex_[3] = hound_ -> getBodyIdx("RL_calf");
+    */
+
+    //foot clearance
+    footframeindex_[0] = hound_ -> getFrameIdxByName("FR_foot");
+    footframeindex_[1] = hound_ -> getFrameIdxByName("FL_foot");
+    footframeindex_[2] = hound_ -> getFrameIdxByName("RR_foot");
+    footframeindex_[3] = hound_ -> getFrameIdxByName("RL_foot");
+    READ_YAML(double, gaitperiod_, cfg_["gaitperiod"])
 
     /// this is nominal configuration of hound
     //This is the reset pose: the exact joint configuration the robot snaps back to at the start of every episode.
@@ -73,7 +84,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     hound_->setGeneralizedForce(Eigen::VectorXd::Zero(gvDim_));
 
     /// MUST BE DONE FOR ALL ENVIRONMENTS
-    obDim_ = 37;
+    obDim_ = 45;
     actionDim_ = nJoints_; actionMean_.setZero(actionDim_); actionStd_.setZero(actionDim_);
     obDouble_.setZero(obDim_);
 
@@ -98,11 +109,13 @@ class ENVIRONMENT : public RaisimGymEnv {
     /// Reward coefficients
     rewards_.initializeFromConfigurationFile (cfg["reward"]);
 
-    /// indices of links that should not make contact with ground
+    /*
+    //airtime -indices of links that should not make contact with ground
     footIndices_.insert(hound_->getBodyIdx("FR_calf"));
     footIndices_.insert(hound_->getBodyIdx("FL_calf"));
     footIndices_.insert(hound_->getBodyIdx("RR_calf"));
     footIndices_.insert(hound_->getBodyIdx("RL_calf"));
+    */
 
     /// visualize if it is the first environment
     if (visualizable_) {
@@ -121,10 +134,12 @@ class ENVIRONMENT : public RaisimGymEnv {
     stepcounter_ = 0;
     rewardpos_ = 0.0;
     rewardneg_ = 0.0;
+    /*
     for (size_t i = 0; i < 4; i++){
       stancetime_[i] = 0.0;
       airtime_[i] = 0.0;
     }
+    */
     updateObservation();
   }
 
@@ -158,16 +173,16 @@ class ENVIRONMENT : public RaisimGymEnv {
     updateObservation();
 
     //for airtime calculation, detect current contact state per foot
-    bool currentcontact_[4] = {false, false, false, false};
+    //bool currentcontact_[4] = {false, false, false, false};
     //getting all the current contact information of hound
-    for (auto& contact : hound_ -> getContacts()){
-      size_t currentcontactinfo_ = contact.getlocalBodyIndex();
-      for (size_t i = 0; i < 4; i++){
-        if (currentcontactinfo_ == footbodyindex_[i]) {
-          currentcontact_[i] = true;
-        }
-      }
-    }
+    //for (auto& contact : hound_ -> getContacts()){
+      //size_t currentcontactinfo_ = contact.getlocalBodyIndex();
+      //for (size_t i = 0; i < 4; i++){
+        //if (currentcontactinfo_ == footbodyindex_[i]) {
+          //currentcontact_[i] = true;
+        //}
+      //}
+    //}
 
     rewardpos_ = 0.0;
     rewardneg_ = 0.0;
@@ -184,8 +199,9 @@ class ENVIRONMENT : public RaisimGymEnv {
     rewards_.record("verticalvelocity", bodyLinearVel_[2] * bodyLinearVel_[2]);
 
     //penalize dragging/jumping behavior
-    double airtimereward_ = 0.0;
-    bool stancecommand_ = (command_.head(2).norm() < 0.1 && abs(command_[2]) < 0.1); //first two computes vx, vy and second option computes yaw rate
+    /*
+    //double airtimereward_ = 0.0;
+    //bool stancecommand_ = (command_.head(2).norm() < 0.1 && abs(command_[2]) < 0.1); //first two computes vx, vy and second option computes yaw rate
 
     for (size_t i = 0; i < 4; i++){
       if (currentcontact_[i]) {
@@ -209,6 +225,19 @@ class ENVIRONMENT : public RaisimGymEnv {
     }
 
     rewards_.record("airtime", airtimereward_);
+    */
+
+    //foot clearance
+    double gaittime_ = stepcounter_ * control_dt_;
+    double footclearancereward_ = 0.0;
+    double maxheight_ = 0.08;
+
+    for (size_t i = 0; i < 4; i++) {
+      double gaitcycle = sin(2 * M_PI * ((gaittime_ / gaitperiod_) + footphase_[i]));
+      double desiredheight = maxheight * std::max(0.0, gaitcycle);
+
+      
+    }
 
     //periodically resamples the command velocity
     stepcounter_++;
@@ -303,6 +332,11 @@ class ENVIRONMENT : public RaisimGymEnv {
   double stancetime_[4] = {0, 0, 0, 0}; //T_s,i
   double airtime_[4] = {0, 0, 0, 0}; //T_a,i
   size_t footbodyindex_[4];
+
+  //foot clearance
+  size_t footframeindex_[4];
+  double gaitperiod_;
+  double footphase_[4] = {0, M_PI, M_PI, 0}; //FR, FL, RR, RL
 
   double rewardpos_, rewardneg_;
 
