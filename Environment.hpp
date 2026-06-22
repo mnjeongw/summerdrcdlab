@@ -50,6 +50,11 @@ class ENVIRONMENT : public RaisimGymEnv {
     maxangvel_ = 0.7;
     READ_YAML(int, commandresamplestep_, cfg_["commandresamplestep"])
 
+    footbodyindex_[0] = hound_ -> getBodyIdx("FR_calf");
+    footbodyindex_[1] = hound_ -> getBodyIdx("FL_calf");
+    footbodyindex_[2] = hound_ -> getBodyIdx("RR_calf");
+    footbodyindex_[3] = hound_ -> getBodyIdx("RL_calf");
+
     /// this is nominal configuration of hound
     //This is the reset pose: the exact joint configuration the robot snaps back to at the start of every episode.
     //(0,0,0.55885) = starting position, (1.0, 0.0, 0.0, 0.0) = quaternion meaning 'no rotation'
@@ -116,6 +121,10 @@ class ENVIRONMENT : public RaisimGymEnv {
     stepcounter_ = 0;
     rewardpos_ = 0.0;
     rewardneg_ = 0.0;
+    for (size_t i = 0; i < 4; i++){
+      stancetime_[i] = 0.0;
+      airtime_[i] = 0.0;
+    }
     updateObservation();
   }
 
@@ -148,11 +157,21 @@ class ENVIRONMENT : public RaisimGymEnv {
 
     updateObservation();
 
+    //for airtime calculation, detect current contact state per foot
+    bool currentcontact_[4] = {false, false, false, false};
+    //getting all the current contact information of hound
+    for (auto& contact : hound_ -> getContacts()){
+      size_t currentcontactinfo_ = contact.getlocalBodyIndex();
+      for (size_t i = 0; i < 4; i++){
+        if (currentcontactinfo_ == footbodyindex_[i]) {
+          currentcontact_[i] = true;
+        }
+      }
+    }
+
     rewardpos_ = 0.0;
     rewardneg_ = 0.0;
 
-    //This is where the reward gets computed. 
-    //This is the exact place where you'd add a new term if you wanted a new task.
     rewards_.record("torque", hound_->getGeneralizedForce().squaredNorm()); //the sum of squared torques across all joints
     
     //reward for tracking the velocity command
@@ -160,12 +179,36 @@ class ENVIRONMENT : public RaisimGymEnv {
     double angvelerr = (command_[2] - bodyAngularVel_[2]);
     rewards_.record("linearvelerr", exp(-linvelerr));
     rewards_.record("angularvelerr", exp(-0.5 * (angvelerr * angvelerr)));
-    
-    //penalizing joint velocity so the robot takes fewer, bigger steps
-    rewards_.record("jointvel", gv_.tail(12).squaredNorm());
 
     //penalize vertical motion to fix bounciness
-    rewards_.record("verticalvelocity", bodyLinearVel_[2].squaredNorm());
+    rewards_.record("verticalvelocity", bodyLinearVel_[2] * bodyLinearVel_[2]);
+
+    //penalize dragging/jumping behavior
+    double airtimereward_ = 0.0;
+    bool stancecommand_ = (command_.head(2).norm() < 0.1 && abs(command_[2]) < 0.1); //first two computes vx, vy and second option computes yaw rate
+
+    for (size_t i = 0; i < 4; i++){
+      if (currentcontact_[i]) {
+        stancetime_[i] += control_dt_;
+        airtime_[i] = 0.0; //reset airtime while the leg is touching the ground
+      } else {
+        airtime_[i] += control_dt_;
+        stancetime_[i] = 0.0; //reset stance timer while the leg is not touching the ground
+      }
+
+      double Ts = stancetime_[i];
+      double Ta = airtime_[i];
+      
+      if (stancecommand_) {
+        if (-0.3 > (Ts - Ta)) { airtimereward_ += -0.3; }
+        else if (0.3 < (Ts - Ta)) { airtimereward_ += 0.3; }
+        else { airtimereward_ += (Ts-Ta); }
+      } else {
+        if (std::max(Ts, Ta) < 0.25) { airtimereward_ += std::min(std::max(Ts, Ta), 0.2); } 
+      }
+    }
+
+    rewards_.record("airtime", airtimereward_);
 
     //periodically resamples the command velocity
     stepcounter_++;
@@ -174,8 +217,8 @@ class ENVIRONMENT : public RaisimGymEnv {
       updateObservation();
     }
 
-    static const std::set<std::string> positiveRewards_ = {"linearvelerr", "angularvelerr"};
-    static const std::set<std::string> negativeRewards_ = {"torque", "jointvel", "verticalvelocity"};
+    static const std::set<std::string> positiveRewards_ = {"linearvelerr", "angularvelerr", "airtime"};
+    static const std::set<std::string> negativeRewards_ = {"torque", "verticalvelocity"};
     
     for (const auto& iterator : rewards_.getStdMap()) {
       const std::string& name = iterator.first;
@@ -235,7 +278,7 @@ class ENVIRONMENT : public RaisimGymEnv {
 
   void curriculumUpdate() { 
     episodecounter_++;
-    maxlinvel_ = 1.0 + (2.5 / (1.0 + exp(-0.002 * (episodecounter_ - 1000))))
+    maxlinvel_ = 1.0 + (2.5 / (1.0 + exp(-0.002 * (episodecounter_ - 1000))));
   };
 
  private:
@@ -255,6 +298,11 @@ class ENVIRONMENT : public RaisimGymEnv {
   int commandresamplestep_;
   int stepcounter_ = 0;
   int episodecounter_ = 0;
+
+  //cmd velocity (airtime)
+  double stancetime_[4] = {0, 0, 0, 0}; //T_s,i
+  double airtime_[4] = {0, 0, 0, 0}; //T_a,i
+  size_t footbodyindex_[4];
 
   double rewardpos_, rewardneg_;
 
