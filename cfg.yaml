@@ -30,8 +30,6 @@ environment:
       coeff: -1e-2
     torque:
       coeff: -3e-4
-    airtime:
-      coeff: 5.0
     footclearance:
       coeff: -15.0
 
