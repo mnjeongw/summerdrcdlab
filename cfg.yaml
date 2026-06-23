@@ -3,18 +3,17 @@ record_video: yes
 
 environment:
   render: True
-  num_envs: 300
+  num_envs: 200
   eval_every_n: 200
   num_threads: 30
   simulation_dt: 0.0025
   control_dt: 0.01
-  max_time: 4.0
+  max_time: 10.0
   
   #command velocity
   maxlinvel: 3.0
   maxangvel: 1.5
   commandresamplestep: 200
-  gaitperiod: 0.5
 
   #joint movement limit
   roll_action_std: 0.1
@@ -26,12 +25,12 @@ environment:
       coeff: 5.0
     angularvelerr:
       coeff: 3.0
-    verticalvelocity:
-      coeff: -1e-2
     torque:
-      coeff: -3e-4
+      coeff: -6e-4
     footclearance:
-      coeff: -15.0
+      coeff: -3.0
+    heightdeviation:
+      coeff: -3.0
 
 architecture:
   policy_net: [128, 128]

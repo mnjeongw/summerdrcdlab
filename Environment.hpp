@@ -8,7 +8,6 @@
 #include <stdlib.h>
 #include <set>
 #include "../../RaisimGymEnv.hpp"
-#include <cmath>
 
 namespace raisim {
 
@@ -42,7 +41,6 @@ class ENVIRONMENT : public RaisimGymEnv {
     gv_.setZero(gvDim_); gv_init_.setZero(gvDim_);
     pTarget_.setZero(gcDim_); vTarget_.setZero(gvDim_); pTarget12_.setZero(nJoints_);
     command_.setZero();
-    gaitclock_.setZero(8);
 
     rewardpos_ = 0.0;
     rewardneg_ = 0.0;
@@ -51,13 +49,6 @@ class ENVIRONMENT : public RaisimGymEnv {
     maxlinvel_ = 1.0;
     maxangvel_ = 0.7;
     READ_YAML(int, commandresamplestep_, cfg_["commandresamplestep"])
-
-    //foot clearance
-    footframeindex_[0] = hound_ -> getFrameIdxByName("FR_foot");
-    footframeindex_[1] = hound_ -> getFrameIdxByName("FL_foot");
-    footframeindex_[2] = hound_ -> getFrameIdxByName("RR_foot");
-    footframeindex_[3] = hound_ -> getFrameIdxByName("RL_foot");
-    READ_YAML(double, gaitperiod_, cfg_["gaitperiod"])
 
     /// this is nominal configuration of hound
     //This is the reset pose: the exact joint configuration the robot snaps back to at the start of every episode.
@@ -77,7 +68,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     hound_->setGeneralizedForce(Eigen::VectorXd::Zero(gvDim_));
 
     /// MUST BE DONE FOR ALL ENVIRONMENTS
-    obDim_ = 45;
+    obDim_ = 37;
     actionDim_ = nJoints_; actionMean_.setZero(actionDim_); actionStd_.setZero(actionDim_);
     obDouble_.setZero(obDim_);
 
@@ -101,12 +92,18 @@ class ENVIRONMENT : public RaisimGymEnv {
 
     /// Reward coefficients
     rewards_.initializeFromConfigurationFile (cfg["reward"]);
-  
-    //indices of links that should not make contact with ground
-    footIndices_.insert(hound_->getBodyIdx("FR_calf"));
-    footIndices_.insert(hound_->getBodyIdx("FL_calf"));
-    footIndices_.insert(hound_->getBodyIdx("RR_calf"));
-    footIndices_.insert(hound_->getBodyIdx("RL_calf"));
+
+    //foot clearance
+    footBodyIndex_[0] = hound_ -> getBodyIdx("FR_calf");
+    footBodyIndex_[1] = hound_ -> getBodyIdx("FL_calf");
+    footBodyIndex_[2] = hound_ -> getBodyIdx("RR_calf");
+    footBodyIndex_[3] = hound_ -> getBodyIdx("RL_calf");
+
+    for (int i = 0; i < 4; i++) { footIndices_.insert(footBodyIndex_[i]); }
+
+    footPosition_.resize(4);
+    footVelocity_.resize(4);
+    desiredFootClearance_ = 0.09;
 
     /// visualize if it is the first environment
     if (visualizable_) {
@@ -125,12 +122,6 @@ class ENVIRONMENT : public RaisimGymEnv {
     stepcounter_ = 0;
     rewardpos_ = 0.0;
     rewardneg_ = 0.0;
-    /*
-    for (size_t i = 0; i < 4; i++){
-      stancetime_[i] = 0.0;
-      airtime_[i] = 0.0;
-    }
-    */
     updateObservation();
   }
 
@@ -161,23 +152,18 @@ class ENVIRONMENT : public RaisimGymEnv {
       if(server_) server_->unlockVisualizationServerMutex();
     }
 
-    updateObservation();
+    for (int i = 0; i < 4; i++) {
+      hound_ -> getPosition(footBodyIndex_[i], footPosition_[i]);
+      hound_ -> getVelocity(footBodyIndex_[i], footVelocity_[i]);
+    }
 
-    //for airtime calculation, detect current contact state per foot
-    //bool currentcontact_[4] = {false, false, false, false};
-    //getting all the current contact information of hound
-    //for (auto& contact : hound_ -> getContacts()){
-      //size_t currentcontactinfo_ = contact.getlocalBodyIndex();
-      //for (size_t i = 0; i < 4; i++){
-        //if (currentcontactinfo_ == footbodyindex_[i]) {
-          //currentcontact_[i] = true;
-        //}
-      //}
-    //}
+    updateObservation();
 
     rewardpos_ = 0.0;
     rewardneg_ = 0.0;
 
+    //This is where the reward gets computed. 
+    //This is the exact place where you'd add a new term if you wanted a new task.
     rewards_.record("torque", hound_->getGeneralizedForce().squaredNorm()); //the sum of squared torques across all joints
     
     //reward for tracking the velocity command
@@ -185,59 +171,30 @@ class ENVIRONMENT : public RaisimGymEnv {
     double angvelerr = (command_[2] - bodyAngularVel_[2]);
     rewards_.record("linearvelerr", exp(-linvelerr));
     rewards_.record("angularvelerr", exp(-0.5 * (angvelerr * angvelerr)));
+    
 
-    //penalize vertical motion to fix bounciness
-    rewards_.record("verticalvelocity", bodyLinearVel_[2] * bodyLinearVel_[2]);
+    double footclearancereward = 0.0;
+    for (int i = 0; i < 4; i++) {
+      bool incontact = false;
+      for (auto& contact : hound_ -> getContacts()) {
+        if (contact.getlocalBodyIndex() == footBodyIndex_[i]) {
+          incontact = true;
+          break;
+        }
 
-    //penalize dragging/jumping behavior
-    /*
-    //double airtimereward_ = 0.0;
-    //bool stancecommand_ = (command_.head(2).norm() < 0.1 && abs(command_[2]) < 0.1); //first two computes vx, vy and second option computes yaw rate
-
-    for (size_t i = 0; i < 4; i++){
-      if (currentcontact_[i]) {
-        stancetime_[i] += control_dt_;
-        airtime_[i] = 0.0; //reset airtime while the leg is touching the ground
-      } else {
-        airtime_[i] += control_dt_;
-        stancetime_[i] = 0.0; //reset stance timer while the leg is not touching the ground
-      }
-
-      double Ts = stancetime_[i];
-      double Ta = airtime_[i];
-      
-      if (stancecommand_) {
-        if (-0.3 > (Ts - Ta)) { airtimereward_ += -0.3; }
-        else if (0.3 < (Ts - Ta)) { airtimereward_ += 0.3; }
-        else { airtimereward_ += (Ts-Ta); }
-      } else {
-        if (std::max(Ts, Ta) < 0.25) { airtimereward_ += std::min(std::max(Ts, Ta), 0.2); } 
+        if (!incontact){
+          double actualfootheight = footPosition_[i][2];
+          double heightError =  actualfootheight - desiredFootClearance_;
+          double footXYspeed = sqrt(footVelocity_[i][0] * footVelocity_[i][0] + footVelocity_[i][1] * footVelocity_[i][1]);
+          footclearancereward += heightError * heightError * footXYspeed;
+        }
       }
     }
 
-    rewards_.record("airtime", airtimereward_);
-    */
+    rewards_.record("footclearance", footclearancereward);
 
-    //foot clearance
-    double gaittime_ = stepcounter_ * control_dt_;
-    double footclearancereward_ = 0.0;
-    double maxheight_ = 0.08;
-
-    for (size_t i = 0; i < 4; i++) {
-      double gaitcycle = sin(2 * M_PI * ((gaittime_ / gaitperiod_) + footphase_[i]));
-      double desiredheight = maxheight_ * std::max(0.0, gaitcycle);
-      
-      hound_ -> getFramePosition(footframeindex_[i], footposition_[i]);
-      double currentheight = footposition_[i][2];
-      double heighterrorsquared_ = (currentheight - desiredheight) * (currentheight - desiredheight);
-
-      hound_ -> getFrameVelocity(footframeindex_[i], footvelocity_[i]);
-      double horizontalspeed = sqrt(footvelocity_[i][0] * footvelocity_[i][0] + footvelocity_[i][1] * footvelocity_[i][1]);
-
-      footclearancereward_ += heighterrorsquared_ * horizontalspeed;
-    }
-
-    rewards_.record("footclearance", footclearancereward_);
+    double heightdeviation = gc_[2] - gc_init_[2];
+    rewards_.record("heightdeviation", heightdeviation * heightdeviation);
 
     //periodically resamples the command velocity
     stepcounter_++;
@@ -247,7 +204,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     }
 
     static const std::set<std::string> positiveRewards_ = {"linearvelerr", "angularvelerr"};
-    static const std::set<std::string> negativeRewards_ = {"torque", "verticalvelocity", "footclearance"};
+    static const std::set<std::string> negativeRewards_ = {"torque", "jointvel", "footclearance", "heightdeviation"};
     
     for (const auto& iterator : rewards_.getStdMap()) {
       const std::string& name = iterator.first;
@@ -273,13 +230,6 @@ class ENVIRONMENT : public RaisimGymEnv {
     bodyLinearVel_ = rot.e().transpose() * gv_.segment(0, 3);
     bodyAngularVel_ = rot.e().transpose() * gv_.segment(3, 3);
 
-    double gaittime_ = stepcounter_ * control_dt_;
-    for (size_t i = 0; i < 4; i++) {
-      double gaitphase_ = 2 * M_PI * ((gaittime_ / gaitperiod_) + footphase_[i]);
-      gaitclock_[i * 2] = sin(gaitphase_);
-      gaitclock_[i * 2 + 1] = cos(gaitphase_);
-    }
-
     //This is the entire sensory input the actor has access to. No terrain info, no camera, no foot contact sensors listed
     //If your new task needs information the policy doesn't currently have access to, (e.g. distance to a goal, a target heading, contact state per foot),
     //This is exactly where you'd add it. You'd need to also bump obDim_ in the constructor to match the new total length
@@ -290,8 +240,7 @@ class ENVIRONMENT : public RaisimGymEnv {
         gc_.tail(12), /// joint angles
         bodyLinearVel_, bodyAngularVel_, /// body linear&angular velocity
         gv_.tail(12), /// joint velocity
-        command_, //command velocity vector
-        gaitclock_;
+        command_; //command velocity vector
   }
 
   void observe(Eigen::Ref<EigenVec> ob) final {
@@ -316,7 +265,7 @@ class ENVIRONMENT : public RaisimGymEnv {
   void curriculumUpdate() { 
     episodecounter_++;
     maxlinvel_ = 1.0 + (2.5 / (1.0 + exp(-0.002 * (episodecounter_ - 1000))));
-  };
+  }
 
  private:
   int gcDim_, gvDim_, nJoints_;
@@ -336,20 +285,13 @@ class ENVIRONMENT : public RaisimGymEnv {
   int stepcounter_ = 0;
   int episodecounter_ = 0;
 
-  //cmd velocity (airtime)
-  Eigen::VectorXd gaitclock_;
-  double stancetime_[4] = {0, 0, 0, 0}; //T_s,i
-  double airtime_[4] = {0, 0, 0, 0}; //T_a,i
-  size_t footbodyindex_[4];
+  double rewardpos_, rewardneg_;
 
   //foot clearance
-  size_t footframeindex_[4];
-  double gaitperiod_;
-  double footphase_[4] = {0, M_PI, M_PI, 0}; //FR, FL, RR, RL
-  raisim::Vec<3> footposition_[4];
-  raisim::Vec<3> footvelocity_[4];
-
-  double rewardpos_, rewardneg_;
+  int footBodyIndex_[4];
+  std::vector<raisim::Vec<3>> footPosition_;
+  std::vector<raisim::Vec<3>> footVelocity_;
+  double desiredFootClearance_;
 
   /// these variables are not in use. They are placed to show you how to create a random number sampler.
   std::normal_distribution<double> normDist_;
