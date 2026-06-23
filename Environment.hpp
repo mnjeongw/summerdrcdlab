@@ -122,6 +122,10 @@ class ENVIRONMENT : public RaisimGymEnv {
     stepcounter_ = 0;
     rewardpos_ = 0.0;
     rewardneg_ = 0.0;
+    for (size_t i = 0; i < 4; i++){
+      stancetime_[i] = 0.0;
+      airtime_[i] = 0.0;
+    }
     updateObservation();
   }
 
@@ -159,6 +163,17 @@ class ENVIRONMENT : public RaisimGymEnv {
 
     updateObservation();
 
+    bool currentcontact_[4] = {false, false, false, false};
+    //getting all the current contact information of hound
+    for (auto& contact : hound_ -> getContacts()){
+      size_t currentcontactinfo_ = contact.getlocalBodyIndex();
+      for (size_t i = 0; i < 4; i++){
+        if (currentcontactinfo_ == footBodyIndex_[i]) {
+          currentcontact_[i] = true;
+        }
+      }
+    }
+    
     rewardpos_ = 0.0;
     rewardneg_ = 0.0;
 
@@ -172,6 +187,31 @@ class ENVIRONMENT : public RaisimGymEnv {
     rewards_.record("linearvelerr", exp(-linvelerr));
     rewards_.record("angularvelerr", exp(-0.5 * (angvelerr * angvelerr)));
     
+    double airtimereward_ = 0.0;
+    bool stancecommand_ = (command_.head(2).norm() < 0.1 && abs(command_[2]) < 0.1); //first two computes vx, vy and second option computes yaw rate
+
+    for (size_t i = 0; i < 4; i++){
+      if (currentcontact_[i]) {
+        stancetime_[i] += control_dt_;
+        airtime_[i] = 0.0; //reset airtime while the leg is touching the ground
+      } else {
+        airtime_[i] += control_dt_;
+        stancetime_[i] = 0.0; //reset stance timer while the leg is not touching the ground
+      }
+
+      double Ts = stancetime_[i];
+      double Ta = airtime_[i];
+      
+      if (stancecommand_) {
+        if (-0.3 > (Ts - Ta)) { airtimereward_ += -0.3; }
+        else if (0.3 < (Ts - Ta)) { airtimereward_ += 0.3; }
+        else { airtimereward_ += (Ts-Ta); }
+      } else {
+        if (std::max(Ts, Ta) < 0.25) { airtimereward_ += std::min(std::max(Ts, Ta), 0.2); } 
+      }
+    }
+
+    rewards_.record("airtime", airtimereward_);
 
     double footclearancereward = 0.0;
     for (int i = 0; i < 4; i++) {
@@ -181,14 +221,14 @@ class ENVIRONMENT : public RaisimGymEnv {
           incontact = true;
           break;
         }
-
-        if (!incontact){
-          double actualfootheight = footPosition_[i][2];
-          double heightError =  actualfootheight - desiredFootClearance_;
-          double footXYspeed = sqrt(footVelocity_[i][0] * footVelocity_[i][0] + footVelocity_[i][1] * footVelocity_[i][1]);
-          footclearancereward += heightError * heightError * footXYspeed;
-        }
       }
+
+      if (!incontact){
+          double actualfootheight = footPosition_[i][2];
+          double footXYspeed = sqrt(footVelocity_[i][0] * footVelocity_[i][0] + footVelocity_[i][1] * footVelocity_[i][1]);
+          double heightError = std::min(0.0, actualfootheight - desiredFootClearance_);
+          footclearancereward += heightError * heightError * sqrt(footXYspeed);
+        }
     }
 
     rewards_.record("footclearance", footclearancereward);
@@ -203,7 +243,7 @@ class ENVIRONMENT : public RaisimGymEnv {
       updateObservation();
     }
 
-    static const std::set<std::string> positiveRewards_ = {"linearvelerr", "angularvelerr"};
+    static const std::set<std::string> positiveRewards_ = {"linearvelerr", "angularvelerr", "airtime"};
     static const std::set<std::string> negativeRewards_ = {"torque", "jointvel", "footclearance", "heightdeviation"};
     
     for (const auto& iterator : rewards_.getStdMap()) {
@@ -292,6 +332,10 @@ class ENVIRONMENT : public RaisimGymEnv {
   std::vector<raisim::Vec<3>> footPosition_;
   std::vector<raisim::Vec<3>> footVelocity_;
   double desiredFootClearance_;
+
+  //airtime
+  double stancetime_[4] = {0,0,0,0};
+  double airtime_[4] = {0,0,0,0};
 
   /// these variables are not in use. They are placed to show you how to create a random number sampler.
   std::normal_distribution<double> normDist_;

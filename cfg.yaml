@@ -8,7 +8,7 @@ environment:
   num_threads: 30
   simulation_dt: 0.0025
   control_dt: 0.01
-  max_time: 10.0
+  max_time: 5.0
   
   #command velocity
   maxlinvel: 3.0
@@ -28,9 +28,11 @@ environment:
     torque:
       coeff: -6e-4
     footclearance:
-      coeff: -3.0
+      coeff: -5.0
     heightdeviation:
       coeff: -3.0
+    airtime:
+      coeff: 7.0
 
 architecture:
   policy_net: [128, 128]
