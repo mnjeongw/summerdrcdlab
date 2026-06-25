@@ -50,6 +50,11 @@ class ENVIRONMENT : public RaisimGymEnv {
     maxangvel_ = 0.7;
     READ_YAML(int, commandresamplestep_, cfg_["commandresamplestep"])
 
+    footbodyindex_[0] = hound_ -> getBodyIdx("FR_calf");
+    footbodyindex_[1] = hound_ -> getBodyIdx("FL_calf");
+    footbodyindex_[2] = hound_ -> getBodyIdx("RR_calf");
+    footbodyindex_[3] = hound_ -> getBodyIdx("RL_calf");
+
     /// this is nominal configuration of hound
     //This is the reset pose: the exact joint configuration the robot snaps back to at the start of every episode.
     //(0,0,0.55885) = starting position, (1.0, 0.0, 0.0, 0.0) = quaternion meaning 'no rotation'
@@ -93,17 +98,11 @@ class ENVIRONMENT : public RaisimGymEnv {
     /// Reward coefficients
     rewards_.initializeFromConfigurationFile (cfg["reward"]);
 
-    //foot clearance
-    footBodyIndex_[0] = hound_ -> getBodyIdx("FR_calf");
-    footBodyIndex_[1] = hound_ -> getBodyIdx("FL_calf");
-    footBodyIndex_[2] = hound_ -> getBodyIdx("RR_calf");
-    footBodyIndex_[3] = hound_ -> getBodyIdx("RL_calf");
-
-    for (int i = 0; i < 4; i++) { footIndices_.insert(footBodyIndex_[i]); }
-
-    footPosition_.resize(4);
-    footVelocity_.resize(4);
-    desiredFootClearance_ = 0.09;
+    /// indices of links that should not make contact with ground
+    footIndices_.insert(hound_->getBodyIdx("FR_calf"));
+    footIndices_.insert(hound_->getBodyIdx("FL_calf"));
+    footIndices_.insert(hound_->getBodyIdx("RR_calf"));
+    footIndices_.insert(hound_->getBodyIdx("RL_calf"));
 
     /// visualize if it is the first environment
     if (visualizable_) {
@@ -156,29 +155,35 @@ class ENVIRONMENT : public RaisimGymEnv {
       if(server_) server_->unlockVisualizationServerMutex();
     }
 
-    for (int i = 0; i < 4; i++) {
-      hound_ -> getPosition(footBodyIndex_[i], footPosition_[i]);
-      hound_ -> getVelocity(footBodyIndex_[i], footVelocity_[i]);
-    }
-
     updateObservation();
 
+    //for airtime calculation, detect current contact state per foot
     bool currentcontact_[4] = {false, false, false, false};
     //getting all the current contact information of hound
     for (auto& contact : hound_ -> getContacts()){
       size_t currentcontactinfo_ = contact.getlocalBodyIndex();
       for (size_t i = 0; i < 4; i++){
-        if (currentcontactinfo_ == footBodyIndex_[i]) {
+        if (currentcontactinfo_ == footbodyindex_[i]) {
           currentcontact_[i] = true;
         }
       }
     }
-    
+
     rewardpos_ = 0.0;
     rewardneg_ = 0.0;
 
-    //This is where the reward gets computed. 
-    //This is the exact place where you'd add a new term if you wanted a new task.
+    //roll pitch penalty
+    quaternionrollpitch_[0] = gc_[3];
+    quaternionrollpitch_[1] = gc_[4];
+    quaternionrollpitch_[2] = gc_[5];
+    quaternionrollpitch_[3] = gc_[6];
+    raisim::quatToRotMat(quaternionrollpitch_, matrixrollpitch_);
+
+    double roll = atan2(matrixrollpitch_.e()(2,1), matrixrollpitch_.e()(2,2));
+    double pitch = atan2(-matrixrollpitch_.e()(2,0), sqrt(matrixrollpitch_.e()(2,1) * matrixrollpitch_.e()(2,1) + matrixrollpitch_.e()(2,2)*matrixrollpitch_.e()(2,2)));
+
+    rewards_.record("rollpitch", roll*roll + pitch * pitch);
+
     rewards_.record("torque", hound_->getGeneralizedForce().squaredNorm()); //the sum of squared torques across all joints
     
     //reward for tracking the velocity command
@@ -186,7 +191,11 @@ class ENVIRONMENT : public RaisimGymEnv {
     double angvelerr = (command_[2] - bodyAngularVel_[2]);
     rewards_.record("linearvelerr", exp(-linvelerr));
     rewards_.record("angularvelerr", exp(-0.5 * (angvelerr * angvelerr)));
-    
+
+    //penalize vertical motion to fix bounciness
+    rewards_.record("verticalvelocity", bodyLinearVel_[2] * bodyLinearVel_[2]);
+
+    //penalize dragging/jumping behavior
     double airtimereward_ = 0.0;
     bool stancecommand_ = (command_.head(2).norm() < 0.1 && abs(command_[2]) < 0.1); //first two computes vx, vy and second option computes yaw rate
 
@@ -213,28 +222,24 @@ class ENVIRONMENT : public RaisimGymEnv {
 
     rewards_.record("airtime", airtimereward_);
 
-    double footclearancereward = 0.0;
-    for (int i = 0; i < 4; i++) {
-      bool incontact = false;
-      for (auto& contact : hound_ -> getContacts()) {
-        if (contact.getlocalBodyIndex() == footBodyIndex_[i]) {
-          incontact = true;
-          break;
-        }
-      }
+    //diagonal reward
+    double diagonalreward_ = 0.0;
 
-      if (!incontact){
-          double actualfootheight = footPosition_[i][2];
-          double footXYspeed = sqrt(footVelocity_[i][0] * footVelocity_[i][0] + footVelocity_[i][1] * footVelocity_[i][1]);
-          double heightError = std::min(0.0, actualfootheight - desiredFootClearance_);
-          footclearancereward += heightError * heightError * sqrt(footXYspeed);
-        }
+    bool pairA = (currentcontact_[0] == currentcontact_[3]);
+    bool pairB = (currentcontact_[1] == currentcontact_[2]);
+
+    if (pairA) { diagonalreward_ += 0.5; }
+    if (pairB) { diagonalreward_ += 0.5; }
+
+    bool pairs_alternate = (currentcontact_[0] != currentcontact_[1]);
+
+    if (pairA && pairB && pairs_alternate) { diagonalreward_ += 1.0; }
+
+    if (!stancecommand_) {
+      rewards_.record("diagonalgait", diagonalreward_); 
+    } else {
+      rewards_.record("diagonalgait", 0.0);
     }
-
-    rewards_.record("footclearance", footclearancereward);
-
-    double heightdeviation = gc_[2] - gc_init_[2];
-    rewards_.record("heightdeviation", heightdeviation * heightdeviation);
 
     //periodically resamples the command velocity
     stepcounter_++;
@@ -243,8 +248,8 @@ class ENVIRONMENT : public RaisimGymEnv {
       updateObservation();
     }
 
-    static const std::set<std::string> positiveRewards_ = {"linearvelerr", "angularvelerr", "airtime"};
-    static const std::set<std::string> negativeRewards_ = {"torque", "jointvel", "footclearance", "heightdeviation"};
+    static const std::set<std::string> positiveRewards_ = {"linearvelerr", "angularvelerr", "airtime", "diagonalreward"};
+    static const std::set<std::string> negativeRewards_ = {"torque", "verticalvelocity", "rollpitch"};
     
     for (const auto& iterator : rewards_.getStdMap()) {
       const std::string& name = iterator.first;
@@ -305,7 +310,7 @@ class ENVIRONMENT : public RaisimGymEnv {
   void curriculumUpdate() { 
     episodecounter_++;
     maxlinvel_ = 1.0 + (2.5 / (1.0 + exp(-0.002 * (episodecounter_ - 1000))));
-  }
+  };
 
  private:
   int gcDim_, gvDim_, nJoints_;
@@ -325,17 +330,16 @@ class ENVIRONMENT : public RaisimGymEnv {
   int stepcounter_ = 0;
   int episodecounter_ = 0;
 
+  //cmd velocity (airtime)
+  double stancetime_[4] = {0, 0, 0, 0}; //T_s,i
+  double airtime_[4] = {0, 0, 0, 0}; //T_a,i
+  size_t footbodyindex_[4];
+
+  //rollpitch penalty
+  raisim::Vec<4> quaternionrollpitch_;
+  raisim::Mat<3,3> matrixrollpitch_;
+
   double rewardpos_, rewardneg_;
-
-  //foot clearance
-  int footBodyIndex_[4];
-  std::vector<raisim::Vec<3>> footPosition_;
-  std::vector<raisim::Vec<3>> footVelocity_;
-  double desiredFootClearance_;
-
-  //airtime
-  double stancetime_[4] = {0,0,0,0};
-  double airtime_[4] = {0,0,0,0};
 
   /// these variables are not in use. They are placed to show you how to create a random number sampler.
   std::normal_distribution<double> normDist_;

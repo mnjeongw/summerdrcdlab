@@ -8,10 +8,10 @@ environment:
   num_threads: 30
   simulation_dt: 0.0025
   control_dt: 0.01
-  max_time: 5.0
+  max_time: 10.0
   
   #command velocity
-  maxlinvel: 3.0
+  maxlinvel: 2.0
   maxangvel: 1.5
   commandresamplestep: 200
 
@@ -22,17 +22,19 @@ environment:
 
   reward:
     linearvelerr:
-      coeff: 5.0
+      coeff: 3.0
     angularvelerr:
       coeff: 3.0
+    verticalvelocity:
+      coeff: -2.0
     torque:
-      coeff: -6e-4
-    footclearance:
-      coeff: -5.0
-    heightdeviation:
-      coeff: -3.0
+      coeff: -3e-4
     airtime:
-      coeff: 7.0
+      coeff: 0.5
+    rollpitch:
+      coeff: -0.5
+    diagonalgait:
+      coeff: 0.5
 
 architecture:
   policy_net: [128, 128]
