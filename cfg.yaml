@@ -38,8 +38,10 @@ environment:
       coeff: -0.5
     diagonalgait:
       coeff: 0.5
-    actionsmoothness:
+    actionsmoothness1:
       coeff: -2.5
+    actionsmoothness2:
+      coeff: -1.2
     jointvelocity:
       coeff: -6e-4
 

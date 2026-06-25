@@ -105,6 +105,9 @@ class ENVIRONMENT : public RaisimGymEnv {
     previousaction_.setZero(nJoints_);
     previousaction_ = actionMean_;
 
+    prevpreviousaction_.setZero(nJoints_);
+    prevpreviousaction_ = actionMean_;
+
     /// Reward coefficients
     rewards_.initializeFromConfigurationFile (cfg["reward"]);
 
@@ -136,6 +139,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     rewardpos_ = 0.0;
     rewardneg_ = 0.0;
     previousaction_ = actionMean_;
+    prevpreviousaction_ = actionMean_;
     for (size_t i = 0; i < 4; i++){
       stancetime_[i] = 0.0;
       airtime_[i] = 0.0;
@@ -324,12 +328,19 @@ class ENVIRONMENT : public RaisimGymEnv {
     pTarget12_ = pTarget12_.cwiseProduct(actionStd_);
     pTarget12_ += actionMean_;
 
-    double actionsmoothnessreward_ = (pTarget12_ - previousaction_).squaredNorm();
+    //first order action smoothness
+    double firstorderactionsmoothness_ = (pTarget12_ - previousaction_).squaredNorm();
+
+    //second order action smoothness
+    double secondorderactionsmoothness_ = (pTarget12_ - 2.0 * previousaction_ + prevpreviousaction_).squaredNorm();
+
+    prevpreviousaction_ = previousaction_;
     previousaction_ = pTarget12_;
 
     pTarget_.tail(nJoints_) = pTarget12_;
 
-    rewards_.record("actionsmoothness", actionsmoothnessreward_);
+    rewards_.record("actionsmoothness1", firstorderactionsmoothness_);
+    rewards_.record("actionsmoothness2", secondorderactionsmoothness_);
 
     //periodically resamples the command velocity
     stepcounter_++;
@@ -339,7 +350,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     }
 
     static const std::set<std::string> positiveRewards_ = {"linearvelerr", "angularvelerr", "airtime", "diagonalgait"};
-    static const std::set<std::string> negativeRewards_ = {"torque", "verticalheight", "jointvelocity", "rollpitch", "actionsmoothness"};
+    static const std::set<std::string> negativeRewards_ = {"torque", "verticalheight", "jointvelocity", "rollpitch", "actionsmoothness1", "actionsmoothness2"};
     
     for (const auto& iterator : rewards_.getStdMap()) {
       const std::string& name = iterator.first;
@@ -434,6 +445,7 @@ class ENVIRONMENT : public RaisimGymEnv {
 
   //action smoothness
   Eigen::VectorXd previousaction_;
+  Eigen::VectorXd prevpreviousaction_;
 
   //verticalheightpenalty
   double maxverticalheight_;
