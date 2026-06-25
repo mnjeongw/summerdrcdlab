@@ -125,7 +125,7 @@ class ENVIRONMENT : public RaisimGymEnv {
 
       //cmd velocity arrow drawn above the robot
       //0.05 = shaft thickness (radius) , 0.5 = base length (height) , (1, 0, 0, 1) = opaque red color
-      cmdvelocity_ = server_ -> addVisualArrow("commandArrow", 0.05, 0.5, 1, 0, 0, 1);
+      cmdvelocity_ = server_ -> addVisualArrow("commandArrow", 0.2, 0.5, 1, 0, 0, 1);
     }
   }
 
@@ -156,14 +156,14 @@ class ENVIRONMENT : public RaisimGymEnv {
     raisim::Vec<4> quaternion;
     raisim::Mat<3,3> rotation;
 
-    quat[0] = gc_[3];
-    quat[1] = gc_[4];
-    quat[2] = gc_[5];
-    quat[3] = gc_[6];
-    raisim::quatToRotMat(quat, rot);
+    quaternion[0] = gc_[3];
+    quaternion[1] = gc_[4];
+    quaternion[2] = gc_[5];
+    quaternion[3] = gc_[6];
+    raisim::quatToRotMat(quaternion, rotation);
 
     Eigen::Vector3d cmdBody(command_[0], command_[1], 0.0);
-    Eigen::Vector3d cmdWorld = rot.e() * cmdBody;
+    Eigen::Vector3d cmdWorld = rotation.e() * cmdBody;
 
     double speed = cmdWorld.norm();
     if (speed < 1e-4) {
