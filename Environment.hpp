@@ -54,7 +54,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     maxlinvel_ = 0.5;
 
     //max vertical height penalty
-    READ_YAML(duoble, maxverticalheight_, cfg_["maxverticalheight"])
+    READ_YAML(double, maxverticalheight_, cfg_["maxverticalheight"])
 
     footbodyindex_[0] = hound_ -> getBodyIdx("FR_calf");
     footbodyindex_[1] = hound_ -> getBodyIdx("FL_calf");
@@ -205,7 +205,7 @@ class ENVIRONMENT : public RaisimGymEnv {
 
     //max vertical height penalty
     double heightdifference_ = gc_[2] - maxverticalheight_;
-    double heightpenalty_ = 0.0
+    double heightpenalty_ = 0.0;
 
     if (heightdifference_ > maxverticalheight_) {
       heightpenalty_ = heightdifference_ * heightdifference_;
@@ -239,6 +239,9 @@ class ENVIRONMENT : public RaisimGymEnv {
     }
 
     rewards_.record("airtime", airtimereward_);
+
+    //joint velocity penalty
+    rewards_.record("jointvelocity", gv_.tail(12).squaredNorm());
 
     //diagonal reward
     /*double diagonalreward_ = 0.0;
@@ -278,7 +281,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     }
 
     static const std::set<std::string> positiveRewards_ = {"linearvelerr", "angularvelerr", "airtime", "diagonalgait"};
-    static const std::set<std::string> negativeRewards_ = {"torque", "verticalvelocity", "rollpitch", "actionsmoothness"};
+    static const std::set<std::string> negativeRewards_ = {"torque", "verticalheight", "jointvelocity", "rollpitch", "actionsmoothness"};
     
     for (const auto& iterator : rewards_.getStdMap()) {
       const std::string& name = iterator.first;

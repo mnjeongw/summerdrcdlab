@@ -40,6 +40,8 @@ environment:
       coeff: 0.5
     actionsmoothness:
       coeff: -2.5
+    jointvelocity:
+      coeff: -6e-4
 
 architecture:
   policy_net: [128, 128]
