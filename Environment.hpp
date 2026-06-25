@@ -46,9 +46,15 @@ class ENVIRONMENT : public RaisimGymEnv {
     rewardneg_ = 0.0;
 
     ///for creating a bound in cmd velocity generation
-    maxlinvel_ = 1.0;
-    maxangvel_ = 0.7;
+    READ_YAML(double, maxlinvellimit_, cfg_["maxlinvel"])
+    READ_YAML(double, maxangvel_, cfg_["maxangvel"])
     READ_YAML(int, commandresamplestep_, cfg_["commandresamplestep"])
+
+    //starting max vel and ang vel
+    maxlinvel_ = 0.5;
+
+    //max vertical height penalty
+    READ_YAML(duoble, maxverticalheight_, cfg_["maxverticalheight"])
 
     footbodyindex_[0] = hound_ -> getBodyIdx("FR_calf");
     footbodyindex_[1] = hound_ -> getBodyIdx("FL_calf");
@@ -95,6 +101,10 @@ class ENVIRONMENT : public RaisimGymEnv {
       actionStd_[leg * 3 + 2] = knee_action_std;
     }
 
+    //action smoothness
+    previousaction_.setZero(nJoints_);
+    previousaction_ = actionMean_;
+
     /// Reward coefficients
     rewards_.initializeFromConfigurationFile (cfg["reward"]);
 
@@ -121,6 +131,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     stepcounter_ = 0;
     rewardpos_ = 0.0;
     rewardneg_ = 0.0;
+    previousaction_ = actionMean_;
     for (size_t i = 0; i < 4; i++){
       stancetime_[i] = 0.0;
       airtime_[i] = 0.0;
@@ -192,8 +203,15 @@ class ENVIRONMENT : public RaisimGymEnv {
     rewards_.record("linearvelerr", exp(-linvelerr));
     rewards_.record("angularvelerr", exp(-0.5 * (angvelerr * angvelerr)));
 
-    //penalize vertical motion to fix bounciness
-    rewards_.record("verticalvelocity", bodyLinearVel_[2] * bodyLinearVel_[2]);
+    //max vertical height penalty
+    double heightdifference_ = gc_[2] - maxverticalheight_;
+    double heightpenalty_ = 0.0
+
+    if (heightdifference_ > maxverticalheight_) {
+      heightpenalty_ = heightdifference_ * heightdifference_;
+    }
+
+    rewards_.record("verticalheight", heightpenalty_);
 
     //penalize dragging/jumping behavior
     double airtimereward_ = 0.0;
@@ -223,7 +241,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     rewards_.record("airtime", airtimereward_);
 
     //diagonal reward
-    double diagonalreward_ = 0.0;
+    /*double diagonalreward_ = 0.0;
 
     bool pairA = (currentcontact_[0] == currentcontact_[3]);
     bool pairB = (currentcontact_[1] == currentcontact_[2]);
@@ -239,7 +257,18 @@ class ENVIRONMENT : public RaisimGymEnv {
       rewards_.record("diagonalgait", diagonalreward_); 
     } else {
       rewards_.record("diagonalgait", 0.0);
-    }
+    } */
+
+    //action smoothness reward
+    pTarget12_ = pTarget12_.cwiseProduct(actionStd_);
+    pTarget12_ += actionMean_;
+
+    double actionsmoothnessreward_ = (pTarget12_ - previousaction_).squaredNorm();
+    previousaction_ = pTarget12_;
+
+    pTarget_.tail(nJoints_) = pTarget12_;
+
+    rewards_.record("actionsmoothness", actionsmoothnessreward_);
 
     //periodically resamples the command velocity
     stepcounter_++;
@@ -248,8 +277,8 @@ class ENVIRONMENT : public RaisimGymEnv {
       updateObservation();
     }
 
-    static const std::set<std::string> positiveRewards_ = {"linearvelerr", "angularvelerr", "airtime", "diagonalreward"};
-    static const std::set<std::string> negativeRewards_ = {"torque", "verticalvelocity", "rollpitch"};
+    static const std::set<std::string> positiveRewards_ = {"linearvelerr", "angularvelerr", "airtime", "diagonalgait"};
+    static const std::set<std::string> negativeRewards_ = {"torque", "verticalvelocity", "rollpitch", "actionsmoothness"};
     
     for (const auto& iterator : rewards_.getStdMap()) {
       const std::string& name = iterator.first;
@@ -262,7 +291,7 @@ class ENVIRONMENT : public RaisimGymEnv {
       }
     }
 
-    return rewardpos_ * exp(0.2 * rewardneg_);
+    return rewardpos_ + rewardneg_;
   }
 
   //Building the observation vector
@@ -309,7 +338,9 @@ class ENVIRONMENT : public RaisimGymEnv {
 
   void curriculumUpdate() { 
     episodecounter_++;
-    maxlinvel_ = 1.0 + (2.5 / (1.0 + exp(-0.002 * (episodecounter_ - 1000))));
+    //progress goes from 0 to 1 as training advances
+    double progress = 1.0 / (1.0 + exp(-0.001 * (episodecounter_ - 2000)));
+    maxlinvel_ = 0.5 + (maxlinvellimit_ -0.5) * progress;
   };
 
  private:
@@ -325,6 +356,7 @@ class ENVIRONMENT : public RaisimGymEnv {
   ///command velocity
   Eigen::Vector3d command_;
   std::uniform_real_distribution<double> uniDist_;
+  double maxlinvellimit_;
   double maxlinvel_, maxangvel_;
   int commandresamplestep_;
   int stepcounter_ = 0;
@@ -338,6 +370,12 @@ class ENVIRONMENT : public RaisimGymEnv {
   //rollpitch penalty
   raisim::Vec<4> quaternionrollpitch_;
   raisim::Mat<3,3> matrixrollpitch_;
+
+  //action smoothness
+  Eigen::VectorXd previousaction_;
+
+  //verticalheightpenalty
+  double maxverticalheight_;
 
   double rewardpos_, rewardneg_;
 

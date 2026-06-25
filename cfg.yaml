@@ -20,21 +20,26 @@ environment:
   hip_action_std: 0.2
   knee_action_std: 0.1
 
+  #verticalheightpenalty
+  maxverticalheight: 0.60
+
   reward:
     linearvelerr:
       coeff: 3.0
     angularvelerr:
       coeff: 3.0
-    verticalvelocity:
-      coeff: -2.0
+    verticalheight:
+      coeff: -2.0 
     torque:
       coeff: -3e-4
     airtime:
-      coeff: 0.5
+      coeff: 0.5 #redundant
     rollpitch:
       coeff: -0.5
     diagonalgait:
       coeff: 0.5
+    actionsmoothness:
+      coeff: -2.5
 
 architecture:
   policy_net: [128, 128]
