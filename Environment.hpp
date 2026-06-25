@@ -119,6 +119,10 @@ class ENVIRONMENT : public RaisimGymEnv {
       server_ = std::make_unique<raisim::RaisimServer>(world_.get());
       server_->launchServer();
       server_->focusOn(hound_);
+
+      //cmd velocity arrow drawn above the robot
+      //0.05 = shaft thickness (radius) , 0.5 = base length (height) , (1, 0, 0, 1) = opaque red color
+      cmdvelocity_ = server_ -> addVisualArrow("commandArrow", 0.05, 0.5, 1, 0, 0, 1);
     }
   }
 
@@ -137,6 +141,56 @@ class ENVIRONMENT : public RaisimGymEnv {
       airtime_[i] = 0.0;
     }
     updateObservation();
+  }
+
+  void updatecmdvelocityarrow() {
+    if (!cmdvelocity_) {
+      return;
+    }
+
+    //rotate body frame command by body orientation
+    raisim::Vec<4> quaternion;
+    raisim::Mat<3,3> rotation;
+
+    quat[0] = gc_[3];
+    quat[1] = gc_[4];
+    quat[2] = gc_[5];
+    quat[3] = gc_[6];
+    raisim::quatToRotMat(quat, rot);
+
+    Eigen::Vector3d cmdBody(command_[0], command_[1], 0.0);
+    Eigen::Vector3d cmdWorld = rot.e() * cmdBody;
+
+    double speed = cmdWorld.norm();
+    if (speed < 1e-4) {
+      cmdvelocity_ -> setColor(1, 0, 0, 0); //invisible
+      return;
+    }
+    cmdvelocity_ -> setColor(1, 0, 0, 1);
+
+    //set position above the robot's body
+    Eigen::Vector3d pos(gc_[0], gc_[1], gc_[2] + 0.35);
+    cmdvelocity_ -> setPosition(pos);
+
+    //rotate the arrow's local +z axis onto the command direction
+    Eigen::Vector3d zAxis(0, 0, 1);
+    Eigen::Vector3d direction = cmdWorld.normalized();
+    Eigen::Vector3d axis = zAxis.cross(direction);
+
+    double axisNorm = axis.norm();
+
+    Eigen::Vector4d quaternionarrow;
+
+    if (axisNorm < 1e-6){
+      //command is straight up or down
+      quaternionarrow << 1, 0, 0, 0;
+    } else {
+      axis /= axisNorm;
+      double angle = std::acos(std::max(-1.0, std::min(1.0,  zAxis.dot(direction))));
+      double s = std::sin(angle / 2.0);
+      quaternionarrow << std::cos(angle / 2.0), axis[0] * s, axis[1] * s, axis[2] * s;
+    }
+    cmdvelocity_ -> setOrientation(quaternionarrow);
   }
 
   //The core per-timestep logic, called once per control_dt (Recall control_dt = how often the policy gets to act)
@@ -167,6 +221,10 @@ class ENVIRONMENT : public RaisimGymEnv {
     }
 
     updateObservation();
+
+    if (visualizable_) {
+      updatecmdvelocityarrow();
+    }
 
     //for airtime calculation, detect current contact state per foot
     bool currentcontact_[4] = {false, false, false, false};
@@ -379,6 +437,9 @@ class ENVIRONMENT : public RaisimGymEnv {
 
   //verticalheightpenalty
   double maxverticalheight_;
+
+  //displaying cmd velocity
+  raisim::Visuals* cmdvelocity_ = nullptr;
 
   double rewardpos_, rewardneg_;
 
