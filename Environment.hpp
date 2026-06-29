@@ -46,7 +46,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     rewardneg_ = 0.0;
 
     ///for creating a bound in cmd velocity generation
-    READ_YAML(double, maxlinvellimit_, cfg_["maxlinvel"])
+    READ_YAML(double, maxlinvellimit_, cfg_["maxlinvellimit"])
     READ_YAML(double, maxangvel_, cfg_["maxangvel"])
     READ_YAML(int, commandresamplestep_, cfg_["commandresamplestep"])
 
@@ -134,7 +134,8 @@ class ENVIRONMENT : public RaisimGymEnv {
   //After every episode, snap back to the fixed initial pose, refresh the observation buffer.
   void reset() final {
     hound_->setState(gc_init_, gv_init_);
-    command_ << maxlinvel_ * uniDist_(gen_), maxlinvel_ * uniDist_(gen_), maxangvel_ * uniDist_(gen_);
+    commandtarget_ << maxlinvel_ * uniDist_(gen_), uniDist_(gen_), maxangvel_ * uniDist_(gen_);
+    command_ = commandtarget_;
     stepcounter_ = 0;
     rewardpos_ = 0.0;
     rewardneg_ = 0.0;
@@ -269,7 +270,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     double heightdifference_ = gc_[2] - maxverticalheight_;
     double heightpenalty_ = 0.0;
 
-    if (heightdifference_ > maxverticalheight_) {
+    if (heightdifference_ > 0.0) {
       heightpenalty_ = heightdifference_ * heightdifference_;
     }
 
@@ -306,7 +307,7 @@ class ENVIRONMENT : public RaisimGymEnv {
     rewards_.record("jointvelocity", gv_.tail(12).squaredNorm());
 
     //diagonal reward
-    /*double diagonalreward_ = 0.0;
+    double diagonalreward_ = 0.0;
 
     bool pairA = (currentcontact_[0] == currentcontact_[3]);
     bool pairB = (currentcontact_[1] == currentcontact_[2]);
@@ -322,12 +323,9 @@ class ENVIRONMENT : public RaisimGymEnv {
       rewards_.record("diagonalgait", diagonalreward_); 
     } else {
       rewards_.record("diagonalgait", 0.0);
-    } */
+    } 
 
     //action smoothness reward
-    pTarget12_ = pTarget12_.cwiseProduct(actionStd_);
-    pTarget12_ += actionMean_;
-
     //first order action smoothness
     double firstorderactionsmoothness_ = (pTarget12_ - previousaction_).squaredNorm();
 
@@ -345,9 +343,10 @@ class ENVIRONMENT : public RaisimGymEnv {
     //periodically resamples the command velocity
     stepcounter_++;
     if (stepcounter_ % commandresamplestep_ == 0) {
-      command_ << maxlinvel_ * uniDist_(gen_), maxlinvel_ * uniDist_(gen_), maxangvel_ * uniDist_(gen_);
-      updateObservation();
+      commandtarget_ << maxlinvel_ * uniDist_(gen_), uniDist_(gen_), maxangvel_ * uniDist_(gen_); 
     }
+    command_ += commandincrement_ * (commandtarget_ - command_);
+    updateObservation();
 
     static const std::set<std::string> positiveRewards_ = {"linearvelerr", "angularvelerr", "airtime", "diagonalgait"};
     static const std::set<std::string> negativeRewards_ = {"torque", "verticalheight", "jointvelocity", "rollpitch", "actionsmoothness1", "actionsmoothness2"};
@@ -427,6 +426,8 @@ class ENVIRONMENT : public RaisimGymEnv {
 
   ///command velocity
   Eigen::Vector3d command_;
+  Eigen::Vector3d commandtarget_;
+  double commandincrement_ = 0.005; //smaller = smoother/slower
   std::uniform_real_distribution<double> uniDist_;
   double maxlinvellimit_;
   double maxlinvel_, maxangvel_;

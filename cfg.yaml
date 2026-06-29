@@ -11,23 +11,23 @@ environment:
   max_time: 10.0
   
   #command velocity
-  maxlinvel: 2.0
-  maxangvel: 1.5
+  maxlinvellimit: 2.0
+  maxangvel: 1.0
   commandresamplestep: 200
 
   #joint movement limit
   roll_action_std: 0.1
   hip_action_std: 0.2
-  knee_action_std: 0.1
+  knee_action_std: 0.2
 
   #verticalheightpenalty
   maxverticalheight: 0.60
 
   reward:
     linearvelerr:
-      coeff: 3.0
+      coeff: 4.0
     angularvelerr:
-      coeff: 3.0
+      coeff: 4.0
     verticalheight:
       coeff: -2.0 
     torque:
