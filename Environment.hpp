@@ -410,7 +410,7 @@ class ENVIRONMENT : public RaisimGymEnv {
   void curriculumUpdate() { 
     episodecounter_++;
     //progress goes from 0 to 1 as training advances
-    double progress = 1.0 / (1.0 + exp(-0.001 * (episodecounter_ - 2000)));
+    double progress = 1.0 / (1.0 + exp(-0.001 * (episodecounter_ - 1000)));
     maxlinvel_ = 0.5 + (maxlinvellimit_ -0.5) * progress;
   };
 

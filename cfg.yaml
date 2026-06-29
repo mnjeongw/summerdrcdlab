@@ -16,7 +16,7 @@ environment:
   commandresamplestep: 200
 
   #joint movement limit
-  roll_action_std: 0.1
+  roll_action_std: 0.05
   hip_action_std: 0.2
   knee_action_std: 0.2
 
